@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	"uuid"
 
 	"github.com/google/uuid"
 )
@@ -17,10 +16,50 @@ type Config struct {
 	Address string
 	Storage string
 }
+
 type Server struct {
 	Logger  *slog.Logger
 	Storage string
 }
+
+// То, что клиент присылает в поле dossier.
+type DossierInput struct {
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	ThreatLevel     int      `json:"threat_level"`
+	Vulnerabilities []string `json:"vulnerabilities"`
+}
+
+// То, что мы сохраняем в storage/entities/{id}.json.
+type Dossier struct {
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	ThreatLevel     int       `json:"threat_level"`
+	Vulnerabilities []string  `json:"vulnerabilities"`
+	EvidenceURLs    []string  `json:"evidence_urls"`
+}
+
+// Информация о конкретном evidence, который сохранить не удалось.
+type FailedEvidence struct {
+	FileName string `json:"file_name"`
+	Reason   string `json:"reason"`
+}
+
+// Ответ POST /api/v1/entities.
+type Response struct {
+	ID                uuid.UUID        `json:"id"`
+	Status            string           `json:"status"`
+	SavedEvidenceURLs []string         `json:"saved_evidence_urls"`
+	FailedEvidence    []FailedEvidence `json:"failed_evidence,omitempty"`
+}
+
+// Причины отказа при обработке отдельных evidence-файлов.
+const (
+	ReasonInvalidMimeType = "invalid_mime_type"
+	ReasonFileTooLarge    = "file_too_large"
+	ReasonFileEmpty       = "file_empty"
+)
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -35,9 +74,9 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           mux,
-		ReadTimeout:       3 * time.Second,
+		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 1 * time.Second,
-		WriteTimeout:      5 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
@@ -57,11 +96,15 @@ func main() {
 		Logger:  logger,
 		Storage: cfg.Storage,
 	}
-	//mux.HandleFunc("POST /api/v1/entities" , PostEntitiy)
+	mux.HandleFunc("POST /api/v1/entities", server.PostEntity)
 	mux.HandleFunc("GET /api/v1/entities/{id}", server.GetEntity)
 	mux.HandleFunc("GET /api/v1/evidence/{filename}", server.GetEvidence)
-
-	logger.Info("application started", slog.String("addr", cfg.Address), slog.Any("started_at ", time.Now()))
+	logger.Info(
+		"application started",
+		slog.String("addr", cfg.Address),
+		slog.String("storage", cfg.Storage),
+		slog.Time("started_at", time.Now()),
+	)
 
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("Server wasnt able to launch", slog.String("err", err.Error()))
@@ -101,7 +144,6 @@ func (s *Server) GetEntity(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Error("unable to write file", slog.String("path", path), slog.Any("err", err))
 		return
 	}
-	return
 
 }
 
@@ -130,10 +172,10 @@ func (s *Server) GetEvidence(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.Logger.Warn("wasn't able to open path", slog.String("path", path), slog.Any("err", err))
 		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "", 404)
+			http.Error(w, "", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "", 500)
+		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
 	defer file.Close()
@@ -150,5 +192,9 @@ func (s *Server) GetEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeContent(w, r, filename, info.ModTime(), file)
-	return
+
+}
+
+func (s *Server) PostEntity(w http.ResponseWriter, r *http.Request) {
+
 }
