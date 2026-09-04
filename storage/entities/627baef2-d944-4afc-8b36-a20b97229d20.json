@@ -1,0 +1,13 @@
+{
+  "id": "627baef2-d944-4afc-8b36-a20b97229d20",
+  "name": "Ghost",
+  "description": "Scary ghost",
+  "threat_level": 7,
+  "vulnerabilities": [
+    "salt",
+    "light"
+  ],
+  "evidence_urls": [
+    "/api/v1/evidence/6ff7b3bc-2a54-4098-bd37-44b50e34ae9a.jpg"
+  ]
+}
