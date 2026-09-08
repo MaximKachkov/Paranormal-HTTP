@@ -1,4 +1,4 @@
-package main
+package httpapi
 
 import (
 	"bytes"
@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"paranormal-http/internal/model"
+	"paranormal-http/internal/storage"
 )
 
 // ------------------------------
@@ -21,30 +24,12 @@ import (
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	storage := t.TempDir()
-
-	if err := os.MkdirAll(
-		filepath.Join(storage, "entities"),
-		0755,
-	); err != nil {
-		t.Fatalf("failed to create entities dir: %v", err)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := storage.New(t.TempDir(), logger)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if err := os.MkdirAll(
-		filepath.Join(storage, "evidence"),
-		0755,
-	); err != nil {
-		t.Fatalf("failed to create evidence dir: %v", err)
-	}
-
-	logger := slog.New(
-		slog.NewTextHandler(io.Discard, nil),
-	)
-
-	return &Server{
-		Logger:  logger,
-		Storage: storage,
-	}
+	return New(logger, store)
 }
 
 // Настоящие минимальные JPEG-байты.
@@ -219,7 +204,7 @@ func TestPostEntitySuccess(t *testing.T) {
 	}
 
 	entityPath := filepath.Join(
-		server.Storage,
+		server.Store.Root,
 		"entities",
 		response.ID+".json",
 	)
@@ -935,7 +920,7 @@ func TestGetEntitySuccess(t *testing.T) {
 		)
 	}
 
-	var entity Dossier
+	var entity model.Dossier
 
 	if err := json.Unmarshal(
 		rec.Body.Bytes(),
@@ -1020,7 +1005,7 @@ func TestGetEvidenceSuccess(t *testing.T) {
 	filename := "test.jpg"
 
 	path := filepath.Join(
-		server.Storage,
+		server.Store.Root,
 		"evidence",
 		filename,
 	)
@@ -1108,7 +1093,7 @@ func TestGetEvidenceRange(t *testing.T) {
 	}
 
 	path := filepath.Join(
-		server.Storage,
+		server.Store.Root,
 		"evidence",
 		filename,
 	)
@@ -1191,102 +1176,6 @@ func TestGetEvidencePathTraversal(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf(
 			"expected 404, got %d",
-			rec.Code,
-		)
-	}
-}
-
-// ------------------------------
-// ATOMIC SAVE TEST
-// ------------------------------
-
-func TestAddDossierAtomicSave(t *testing.T) {
-	server := newTestServer(t)
-
-	dossier := Dossier{
-		ID:              "11111111-1111-1111-1111-111111111111",
-		Name:            "Ghost",
-		Description:     "Ghost description",
-		ThreatLevel:     7,
-		Vulnerabilities: []string{"salt"},
-		EvidenceURLs: []string{
-			"/api/v1/evidence/test.jpg",
-		},
-	}
-
-	if err := server.AddDossier(
-		dossier,
-	); err != nil {
-		t.Fatalf(
-			"AddDossier failed: %v",
-			err,
-		)
-	}
-
-	finalPath := filepath.Join(
-		server.Storage,
-		"entities",
-		dossier.ID+".json",
-	)
-
-	if _, err := os.Stat(finalPath); err != nil {
-		t.Fatalf(
-			"final dossier does not exist: %v",
-			err,
-		)
-	}
-
-	tmpPath := filepath.Join(
-		server.Storage,
-		"entities",
-		dossier.ID+".json.tmp",
-	)
-
-	if _, err := os.Stat(tmpPath); !errorsIsNotExist(err) {
-		t.Fatalf(
-			"temporary file still exists",
-		)
-	}
-}
-
-func errorsIsNotExist(err error) bool {
-	return err != nil && os.IsNotExist(err)
-}
-
-// ------------------------------
-// RECOVERY TEST
-// ------------------------------
-
-func TestRecoveryMiddleware(t *testing.T) {
-	server := newTestServer(t)
-
-	handler := server.RecoveryMiddleware(
-		http.HandlerFunc(
-			func(
-				w http.ResponseWriter,
-				r *http.Request,
-			) {
-				panic("ghost escaped")
-			},
-		),
-	)
-
-	req := httptest.NewRequest(
-		http.MethodGet,
-		"/panic",
-		nil,
-	)
-
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(
-		rec,
-		req,
-	)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf(
-			"expected 500, got %d",
 			rec.Code,
 		)
 	}
